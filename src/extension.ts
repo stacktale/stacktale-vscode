@@ -5,8 +5,10 @@ import { parseReports, StReport } from "./stParser";
 
 export function activate(context: vscode.ExtensionContext): void {
   const provider = new ReportsProvider();
+  const reportsView = vscode.window.createTreeView("stacktale.reports", { treeDataProvider: provider });
+  provider.bindView(reportsView);
   context.subscriptions.push(
-    vscode.window.createTreeView("stacktale.reports", { treeDataProvider: provider }),
+    reportsView,
     vscode.commands.registerCommand("stacktale.refresh", () => provider.refresh()),
     vscode.commands.registerCommand("stacktale.openReport", (report: StReport) => openCulprit(report)),
     vscode.commands.registerCommand("stacktale.copyForAI", (item?: ReportItem) => copyForAI(item)),
@@ -37,7 +39,12 @@ async function locateLogFile(): Promise<string | undefined> {
 
 class ReportsProvider implements vscode.TreeDataProvider<ReportItem> {
   private readonly changed = new vscode.EventEmitter<void>();
+  private view?: vscode.TreeView<ReportItem>;
   readonly onDidChangeTreeData = this.changed.event;
+
+  bindView(view: vscode.TreeView<ReportItem>): void {
+    this.view = view;
+  }
 
   refresh(): void {
     this.changed.fire();
@@ -50,8 +57,10 @@ class ReportsProvider implements vscode.TreeDataProvider<ReportItem> {
   async getChildren(): Promise<ReportItem[]> {
     const file = await locateLogFile();
     if (!file || !fs.existsSync(file)) {
+      this.setDescription(undefined);
       return [ReportItem.note("No errors-ai.log in this workspace yet.")];
     }
+    this.setDescription(vscode.workspace.asRelativePath(file, false));
     let content: string;
     try {
       content = fs.readFileSync(file, "utf8");
@@ -63,6 +72,12 @@ class ReportsProvider implements vscode.TreeDataProvider<ReportItem> {
       return [ReportItem.note("No error reports yet — the file has none.")];
     }
     return reports.map((r) => ReportItem.report(r));
+  }
+
+  private setDescription(description: string | undefined): void {
+    if (this.view) {
+      this.view.description = description;
+    }
   }
 }
 
@@ -88,13 +103,11 @@ class ReportItem extends vscode.TreeItem {
       : `#${report.id}`;
     item.contextValue = "report";
     item.iconPath = new vscode.ThemeIcon("bug");
-    if (report.culprit) {
-      item.command = {
-        command: "stacktale.openReport",
-        title: "Open culprit",
-        arguments: [report],
-      };
-    }
+    item.command = {
+      command: "stacktale.openReport",
+      title: "Open report",
+      arguments: [report],
+    };
     return item;
   }
 }

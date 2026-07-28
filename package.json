@@ -72,6 +72,12 @@
           "when": "view == stacktale.reports && viewItem == report",
           "group": "inline"
         }
+      ],
+      "commandPalette": [
+        {
+          "command": "stacktale.copyForAI",
+          "when": "false"
+        }
       ]
     },
     "configuration": {

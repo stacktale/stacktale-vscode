@@ -49,3 +49,18 @@ test("ignores the file header's mid-line quote of the delimiter", () => {
   assert.equal(reports.length, 1);
   assert.equal(reports[0].id, "bbbb2222");
 });
+
+test("keeps reports that do not contain a source frame", () => {
+  const content = [
+    "━━━ ERROR #cccc3333 ━━━ 2026-07-10 12:00:00.000 thread=main ━━━",
+    "ERROR (no exception): payment timed out",
+    "env: app=shop-api 1.4.2 | java 21 | prod",
+    "━━━ END #cccc3333 ━━━",
+  ].join("\n");
+
+  const reports = parseReports(content);
+  assert.equal(reports.length, 1);
+  assert.equal(reports[0].id, "cccc3333");
+  assert.equal(reports[0].frames.length, 0);
+  assert.equal(reports[0].culprit, undefined);
+});
