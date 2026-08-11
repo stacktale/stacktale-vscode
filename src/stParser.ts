@@ -1,7 +1,8 @@
-// Parses the st/1 text in errors-ai.log into reports. Pure — no vscode dependency — so it
-// is unit-testable headless. Mirrors the IntelliJ plugin's parser: tolerant of unknown
-// lines (forward compatibility per the st/1 spec), of the self-describing file header
-// (which quotes the delimiter mid-line inside a '#' comment), and of truncated/rotated files.
+// Parses st/1 text or st-json/1 NDJSON in errors-ai.log into reports. Pure — no vscode
+// dependency — so it is unit-testable headless. Mirrors the IntelliJ plugin's text parser:
+// tolerant of unknown lines (forward compatibility per the st/1 spec), of the
+// self-describing file header (which quotes the delimiter mid-line inside a '#' comment),
+// and of truncated/rotated files.
 
 export interface StFrame {
   /** The source file name as written in the frame, e.g. "PaymentService.java". */
@@ -39,10 +40,21 @@ const HEADER = /^━━━ ERROR #(\S+) ━━━ (.+?) thread=/;
 const FRAME = /\(([^\s:()]+\.(?:java|kts|kt|groovy|scala)):(-?\d+)\)/;
 
 export function parseReports(content: string): StReport[] {
-  const reports: StReport[] = [];
   if (!content) {
-    return reports;
+    return [];
   }
+
+  const firstEntry = content
+    .split("\n")
+    .map(stripCr)
+    .map((line) => line.trim())
+    .find((line) => line.length > 0 && !line.startsWith("#"));
+
+  return firstEntry?.startsWith("{") ? parseJsonReports(content) : parseTextReports(content);
+}
+
+function parseTextReports(content: string): StReport[] {
+  const reports: StReport[] = [];
   const lines = content.split("\n").map(stripCr);
   let i = 0;
   while (i < lines.length) {
@@ -79,6 +91,121 @@ export function parseReports(content: string): StReport[] {
     i = j;
   }
   return reports;
+}
+
+function parseJsonReports(content: string): StReport[] {
+  const reports: StReport[] = [];
+  for (const rawLine of content.split("\n")) {
+    const line = stripCr(rawLine).trim();
+    if (!line) {
+      continue;
+    }
+
+    let entry: unknown;
+    try {
+      entry = JSON.parse(line);
+    } catch {
+      continue; // torn/half-written lines must not abort the rest of the file
+    }
+
+    const report = parseJsonReport(entry);
+    if (report) {
+      reports.push(report);
+    }
+  }
+  return reports;
+}
+
+function parseJsonReport(entry: unknown): StReport | undefined {
+  if (!isObject(entry) || entry.type !== "report") {
+    return undefined;
+  }
+
+  const id = stringValue(entry.id);
+  if (!id) {
+    return undefined;
+  }
+
+  const timestamp = jsonTimestamp(stringValue(entry.ts));
+  const error = isObject(entry.error) ? entry.error : {};
+  const headline = jsonHeadline(error);
+  const frames: StFrame[] = [];
+
+  let culprit: StFrame | undefined;
+  const culpritValue = isObject(error.culprit) ? error.culprit : undefined;
+  if (culpritValue) {
+    const frameText = stringValue(culpritValue.frame);
+    const text = culpritValue.appCode === true ? `${frameText} ← YOUR CODE` : frameText;
+    culprit = parseFrame(text);
+    if (culprit) {
+      frames.push(culprit);
+    }
+  }
+
+  if (Array.isArray(error.wrappedBy)) {
+    for (const value of error.wrappedBy) {
+      if (typeof value !== "string") {
+        continue;
+      }
+      const frame = parseFrame(value);
+      if (frame) {
+        frames.push(frame);
+      }
+    }
+  }
+
+  const stack = isObject(entry.stack) ? entry.stack : undefined;
+  if (stack && Array.isArray(stack.frames)) {
+    for (const value of stack.frames) {
+      if (typeof value !== "string") {
+        continue;
+      }
+      const frame = parseFrame(value);
+      if (frame) {
+        frames.push(frame);
+      }
+    }
+  }
+
+  return {
+    id,
+    timestamp,
+    headline,
+    culprit,
+    frames,
+    block: JSON.stringify(entry, null, 2) + "\n",
+  };
+}
+
+function jsonHeadline(error: Record<string, unknown>): string {
+  const message = stringValue(error.message);
+  if (error.noException === true) {
+    return `ERROR (no exception): ${message}`;
+  }
+  const type = stringValue(error.type);
+  return message ? `${type}: ${message}` : type;
+}
+
+function jsonTimestamp(timestamp: string): string {
+  const match = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2}\.\d{3})(?:Z|[+-]\d{2}:\d{2})$/.exec(timestamp);
+  return match ? `${match[1]} ${match[2]}` : timestamp;
+}
+
+function parseFrame(text: string): StFrame | undefined {
+  const match = FRAME.exec(text);
+  if (!match) {
+    return undefined;
+  }
+  const line = parseInt(match[2], 10);
+  return line > 0 ? { file: match[1], line, text: text.trim() } : undefined;
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function stringValue(value: unknown): string {
+  return typeof value === "string" ? value : "";
 }
 
 function parseBlock(block: string[]): StReport | undefined {

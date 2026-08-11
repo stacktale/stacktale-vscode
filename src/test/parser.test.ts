@@ -65,6 +65,59 @@ test("keeps reports that do not contain a source frame", () => {
   assert.equal(reports[0].culprit, undefined);
 });
 
+test("parses st-json/1 reports and ignores non-report and torn entries", () => {
+  const content = [
+    '  {"type":"header","format":"st-json/1"}',
+    JSON.stringify({
+      type: "report",
+      id: "json0001",
+      ts: "2026-07-10T20:16:40.412Z",
+      thread: "main",
+      error: {
+        type: "IllegalStateException",
+        message: "payment gateway refused",
+        culprit: {
+          frame: "PaymentService.charge(PaymentService.java:44)",
+          appCode: true,
+        },
+      },
+      stack: {
+        shown: 1,
+        total: 1,
+        frames: ["PaymentService.charge(PaymentService.java:44)"],
+      },
+    }),
+    '{"type":"repeat","id":"json0001","count":3,"last":"2026-07-10T20:17:30.000Z"}',
+    '{"type":"report","id":"half-written"',
+  ].join("\n");
+
+  const reports = parseReports(content);
+  assert.equal(reports.length, 1);
+  const r = reports[0];
+  assert.equal(r.id, "json0001");
+  assert.equal(r.timestamp, "2026-07-10 20:16:40.412");
+  assert.equal(r.headline, "IllegalStateException: payment gateway refused");
+  assert.equal(r.culprit?.file, "PaymentService.java");
+  assert.equal(r.culprit?.line, 44);
+  assert.equal(JSON.parse(r.block).type, "report");
+});
+
+test("maps an st-json/1 no-exception report", () => {
+  const content = JSON.stringify({
+    type: "report",
+    id: "json0002",
+    ts: "2026-07-10T20:17:01.000Z",
+    thread: "worker-1",
+    error: { noException: true, message: "checkout timed out" },
+  });
+
+  const reports = parseReports(content);
+  assert.equal(reports.length, 1);
+  assert.equal(reports[0].headline, "ERROR (no exception): checkout timed out");
+  assert.equal(reports[0].frames.length, 0);
+  assert.equal(reports[0].culprit, undefined);
+});
+
 // The three bugs from #5, mirroring the fix landed in the JetBrains plugin (its PR #11).
 // The two parsers are deliberate twins; these cases must behave identically in both.
 
