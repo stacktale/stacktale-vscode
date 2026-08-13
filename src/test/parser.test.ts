@@ -175,3 +175,73 @@ test("parses unicode filenames and .kts frames", () => {
   assert.equal(reports[1].culprit?.file, "構建.kts");
   assert.equal(reports[1].culprit?.line, 9);
 });
+
+test("deduplicates the culprit location in text and st-json/1 reports", () => {
+  const textContent = [
+    "━━━ ERROR #dedupe-text ━━━ 2026-07-10 20:24:00.000 thread=main ━━━",
+    "IllegalStateException: payment gateway refused",
+    "at PaymentService.charge(PaymentService.java:118) ← YOUR CODE",
+    "stack (distilled, 1 of 1 frames):",
+    "  PaymentService.charge(PaymentService.java:118) ← culprit",
+    "━━━ END #dedupe-text ━━━",
+  ].join("\n");
+
+  const jsonContent = JSON.stringify({
+    type: "report",
+    id: "dedupe-json",
+    ts: "2026-07-10T20:24:00.000Z",
+    error: {
+      type: "IllegalStateException",
+      message: "payment gateway refused",
+      culprit: {
+        frame: "PaymentService.charge(PaymentService.java:118)",
+        appCode: true,
+      },
+    },
+    stack: {
+      shown: 1,
+      total: 1,
+      frames: ["PaymentService.charge(PaymentService.java:118)"],
+    },
+  });
+
+  const textReport = parseReports(textContent)[0];
+  const jsonReport = parseReports(jsonContent)[0];
+
+  const textLocations = textReport.frames.map(
+    (frame) => `${frame.file}:${frame.line}`,
+  );
+  const jsonLocations = jsonReport.frames.map(
+    (frame) => `${frame.file}:${frame.line}`,
+  );
+
+  assert.deepEqual(textLocations, ["PaymentService.java:118"]);
+  assert.deepEqual(jsonLocations, textLocations);
+  assert.match(textReport.frames[0].text, /← YOUR CODE/);
+  assert.match(jsonReport.frames[0].text, /← YOUR CODE/);
+});
+
+test("keeps distinct frames when the culprit is not the top stack frame", () => {
+  const content = [
+    "━━━ ERROR #non-top ━━━ 2026-07-10 20:25:00.000 thread=main ━━━",
+    "IllegalStateException: payment gateway refused",
+    "at PaymentService.charge(PaymentService.java:118) ← YOUR CODE",
+    "stack (distilled, 3 of 3 frames):",
+    "  CheckoutController.submit(CheckoutController.java:31)",
+    "  PaymentService.charge(PaymentService.java:118) ← culprit",
+    "  Worker.run(Worker.java:9)",
+    "━━━ END #non-top ━━━",
+  ].join("\n");
+
+  const report = parseReports(content)[0];
+
+  assert.deepEqual(
+    report.frames.map((frame) => `${frame.file}:${frame.line}`),
+    [
+      "PaymentService.java:118",
+      "CheckoutController.java:31",
+      "Worker.java:9",
+    ],
+  );
+  assert.match(report.frames[0].text, /← YOUR CODE/);
+});

@@ -172,7 +172,7 @@ function parseJsonReport(entry: unknown): StReport | undefined {
     timestamp,
     headline,
     culprit,
-    frames,
+    frames: framesWithoutDuplicateCulprit(culprit, frames),
     block: JSON.stringify(entry, null, 2) + "\n",
   };
 }
@@ -198,6 +198,23 @@ function parseFrame(text: string): StFrame | undefined {
   }
   const line = parseInt(match[2], 10);
   return line > 0 ? { file: match[1], line, text: text.trim() } : undefined;
+}
+
+function framesWithoutDuplicateCulprit(
+  culprit: StFrame | undefined,
+  frames: StFrame[],
+): StFrame[] {
+  if (!culprit) {
+    return frames;
+  }
+
+  return [
+    culprit,
+    ...frames.filter(
+      (frame) =>
+        frame.file !== culprit.file || frame.line !== culprit.line,
+    ),
+  ];
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -245,7 +262,15 @@ function parseBlock(block: string[]): StReport | undefined {
   if (!culprit && !markedFrameSeen && frames.length > 0) {
     culprit = frames[0];
   }
-  return { id, timestamp, headline, culprit, frames, block: block.join("\n") };
+
+  return {
+    id,
+    timestamp,
+    headline,
+    culprit,
+    frames: framesWithoutDuplicateCulprit(culprit, frames),
+    block: block.join("\n"),
+  };
 }
 
 function stripCr(s: string): string {
